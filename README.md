@@ -14,7 +14,7 @@ Builds [SignuDoc](https://github.com/NYLLON-SOFTWARE/SignuDoc) from an upstream 
 `patches/*.patch` are applied in order on top of the upstream tag.
 
 - `0001-email-layout.patch`: every email to a person is sent in a branded card layout with a title, paragraphs that are only links become buttons, and the "Sent by … using SignuDoc" line is gone (`src/lib/services/email-layout.ts`, with tests).
-- `0002-deadline-time-zone.patch`: deadlines ("This request expires on …") are written in `DISPLAY_TIME_ZONE` instead of always UTC, with CST/CDT shown.
+- `0002-display-time-zone.patch`: every date and time signers see is written in `DISPLAY_TIME_ZONE` (CST/CDT shown) instead of UTC: deadlines in emails, date fields filled in at signing, the verify page, the certificate of completion, and the sender's envelope pages. The certificate still records each signer's own clock offset.
 
 ## Layout on the server
 

@@ -1,0 +1,401 @@
+diff --git a/src/app/(app)/envelopes/[id]/page.tsx b/src/app/(app)/envelopes/[id]/page.tsx
+index bc26eed..13716c6 100644
+--- a/src/app/(app)/envelopes/[id]/page.tsx
++++ b/src/app/(app)/envelopes/[id]/page.tsx
+@@ -11,11 +11,12 @@ import {
+ } from "@/lib/envelope-access";
+ import { getScheduledEnvelopeDeletion } from "@/lib/envelope-deletion";
+ import { getEnvelopeDetailDataForUser } from "@/lib/envelopes";
++import { displayTimeZone } from "@/lib/display-time-zone";
+ 
+ const deletionDateFormatter = new Intl.DateTimeFormat("en-US", {
+   day: "numeric",
+   month: "long",
+-  timeZone: "UTC",
++  timeZone: displayTimeZone(),
+   year: "numeric",
+ });
+ 
+diff --git a/src/components/signing/signing-live-shell.tsx b/src/components/signing/signing-live-shell.tsx
+index dad6ad4..bf5baf5 100644
+--- a/src/components/signing/signing-live-shell.tsx
++++ b/src/components/signing/signing-live-shell.tsx
+@@ -561,6 +561,7 @@ export function SigningLiveShell({
+     new Intl.DateTimeFormat("en-US", {
+       day: "numeric",
+       month: "long",
++      timeZone: record.displayTimeZone,
+       year: "numeric",
+     }).format(new Date()),
+   );
+diff --git a/src/components/verify/verify-form.tsx b/src/components/verify/verify-form.tsx
+index 179e3cb..903fae0 100644
+--- a/src/components/verify/verify-form.tsx
++++ b/src/components/verify/verify-form.tsx
+@@ -12,14 +12,25 @@ type VerifyAnswer =
+       approverCount?: number;
+       signerCount: number;
+       status: "completed" | "declined" | "voided";
++      /** The IANA zone to show finishedAt in, from the server. */
++      timeZone?: string;
+       title: string;
+     };
+ 
+-const dateFormatter = new Intl.DateTimeFormat("en-US", {
+-  dateStyle: "long",
+-  timeStyle: "short",
+-  timeZone: "UTC",
+-});
++/** "December 6, 2026 at 5:00 PM CST" */
++function formatFinishedAt(unixTimestamp: number, timeZone = "UTC"): string {
++  return new Intl.DateTimeFormat("en-US", {
++    day: "numeric",
++    hour: "numeric",
++    minute: "2-digit",
++    month: "long",
++    timeZone,
++    timeZoneName: "short",
++    year: "numeric",
++  })
++    .format(new Date(unixTimestamp * 1000))
++    .replace(/[\u202f\u00a0]/g, " ");
++}
+ 
+ const STATUS_WORDS = {
+   completed: "completed",
+@@ -121,7 +132,7 @@ export function VerifyForm() {
+             <p className="mt-2 text-sm text-(--secondary)">
+               The envelope was {STATUS_WORDS[answer.status]}
+               {answer.finishedAt
+-                ? ` on ${dateFormatter.format(new Date(answer.finishedAt * 1000))} UTC`
++                ? ` on ${formatFinishedAt(answer.finishedAt, answer.timeZone)}`
+                 : ""}{" "}
+               with {answer.signerCount} signer
+               {answer.signerCount === 1 ? "" : "s"}
+diff --git a/src/lib/display-time-zone.test.ts b/src/lib/display-time-zone.test.ts
+new file mode 100644
+index 0000000..b4df677
+--- /dev/null
++++ b/src/lib/display-time-zone.test.ts
+@@ -0,0 +1,39 @@
++import assert from "node:assert/strict";
++import { test } from "node:test";
++
++import {
++  displayTimeZone,
++  formatEvidenceTimestamp,
++} from "./display-time-zone.ts";
++
++test("the display zone comes from DISPLAY_TIME_ZONE, and anything else is UTC", () => {
++  assert.equal(
++    displayTimeZone({ DISPLAY_TIME_ZONE: "America/Winnipeg" }),
++    "America/Winnipeg",
++  );
++  assert.equal(displayTimeZone({}), "UTC");
++  assert.equal(displayTimeZone({ DISPLAY_TIME_ZONE: " " }), "UTC");
++  assert.equal(displayTimeZone({ DISPLAY_TIME_ZONE: "Mars/Olympus" }), "UTC");
++});
++
++test("evidence times are sortable, 24-hour, and name their zone", () => {
++  // 2026-12-06 23:00:05 UTC
++  const timestamp = Date.UTC(2026, 11, 6, 23, 0, 5) / 1000;
++
++  assert.equal(
++    formatEvidenceTimestamp(timestamp, "America/Winnipeg"),
++    "2026-12-06 17:00:05 CST",
++  );
++  assert.equal(
++    formatEvidenceTimestamp(timestamp, "UTC"),
++    "2026-12-06 23:00:05 UTC",
++  );
++  // Just after midnight stays 00, not 24.
++  assert.equal(
++    formatEvidenceTimestamp(
++      Date.UTC(2026, 6, 7, 5, 0, 0) / 1000,
++      "America/Winnipeg",
++    ),
++    "2026-07-07 00:00:00 CDT",
++  );
++});
+diff --git a/src/lib/display-time-zone.ts b/src/lib/display-time-zone.ts
+new file mode 100644
+index 0000000..3ed23c3
+--- /dev/null
++++ b/src/lib/display-time-zone.ts
+@@ -0,0 +1,49 @@
++/**
++ * The zone every date and time people see is written in: DISPLAY_TIME_ZONE
++ * (an IANA name such as "America/Winnipeg"), or UTC when it is unset or not
++ * a zone. Server-only: pages hand it to browser code as data.
++ */
++export function displayTimeZone(
++  env: Record<string, string | undefined> = process.env,
++): string {
++  const zone = env.DISPLAY_TIME_ZONE?.trim();
++
++  if (!zone) {
++    return "UTC";
++  }
++
++  try {
++    new Intl.DateTimeFormat("en-US", { timeZone: zone });
++
++    return zone;
++  } catch {
++    return "UTC";
++  }
++}
++
++/**
++ * "2026-12-06 17:00:00 CST": the evidence format, sortable and with the zone
++ * named, so a time on the certificate is never ambiguous.
++ */
++export function formatEvidenceTimestamp(
++  unixTimestamp: number,
++  timeZone: string = displayTimeZone(),
++): string {
++  const parts = Object.fromEntries(
++    new Intl.DateTimeFormat("en-US", {
++      day: "2-digit",
++      hour: "2-digit",
++      hourCycle: "h23",
++      minute: "2-digit",
++      month: "2-digit",
++      second: "2-digit",
++      timeZone,
++      timeZoneName: "short",
++      year: "numeric",
++    })
++      .formatToParts(new Date(unixTimestamp * 1000))
++      .map((part) => [part.type, part.value]),
++  );
++
++  return `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}:${parts.second} ${parts.timeZoneName}`;
++}
+diff --git a/src/lib/envelope-deadline.test.ts b/src/lib/envelope-deadline.test.ts
+index fa8ec21..99ac7ba 100644
+--- a/src/lib/envelope-deadline.test.ts
++++ b/src/lib/envelope-deadline.test.ts
+@@ -86,3 +86,16 @@ test("a deadline is written out in full, in UTC", () => {
+   );
+   assert.equal(buildDeadlineLine(null), null);
+ });
++
++test("a deadline is written in the install's own zone, daylight time included", () => {
++  // 2027-01-15 08:00:00 UTC, in winter
++  assert.equal(
++    formatDeadline(1_800_000_000, "America/Winnipeg"),
++    "January 15, 2027 at 2:00 AM CST",
++  );
++  // 2026-12-06 is still winter; 2026-07-06 23:00 UTC is in daylight time
++  assert.equal(
++    formatDeadline(Date.UTC(2026, 6, 6, 23) / 1000, "America/Winnipeg"),
++    "July 6, 2026 at 6:00 PM CDT",
++  );
++});
+diff --git a/src/lib/envelope-deadline.ts b/src/lib/envelope-deadline.ts
+index 89d7e62..286b884 100644
+--- a/src/lib/envelope-deadline.ts
++++ b/src/lib/envelope-deadline.ts
+@@ -3,6 +3,7 @@ import {
+   MAX_ENVELOPE_DEADLINE_DAYS,
+   SIGNING_LINK_TTL_SECONDS,
+ } from "./types/domain.ts";
++import { displayTimeZone } from "./display-time-zone.ts";
+ 
+ // The deadline of an envelope: the moment after which nobody can sign it.
+ //
+@@ -93,18 +94,20 @@ export function nextSignerLinkExpiresAt(
+     : turnStartsAt + SIGNING_LINK_TTL_SECONDS;
+ }
+ 
+-const deadlineFormatter = new Intl.DateTimeFormat("en-US", {
+-  day: "numeric",
+-  hour: "numeric",
+-  minute: "2-digit",
+-  month: "long",
+-  timeZone: "UTC",
+-  year: "numeric",
+-});
+-
+-/** "December 12, 2026 at 9:20 PM UTC" */
+-export function formatDeadline(unixTimestamp: number): string {
+-  return `${deadlineFormatter
++/** "December 12, 2026 at 9:20 PM UTC", or "… at 3:20 PM CST" in Winnipeg. */
++export function formatDeadline(
++  unixTimestamp: number,
++  timeZone: string = displayTimeZone(),
++): string {
++  return new Intl.DateTimeFormat("en-US", {
++    day: "numeric",
++    hour: "numeric",
++    minute: "2-digit",
++    month: "long",
++    timeZone,
++    timeZoneName: "short",
++    year: "numeric",
++  })
+     .format(new Date(unixTimestamp * 1000))
+-    .replace(/[  ]/g, " ")} UTC`;
++    .replace(/[\u202f\u00a0]/g, " ");
+ }
+diff --git a/src/lib/envelopes.ts b/src/lib/envelopes.ts
+index 5bb8e44..f4b46e6 100644
+--- a/src/lib/envelopes.ts
++++ b/src/lib/envelopes.ts
+@@ -144,6 +144,7 @@ import {
+ import { escapeHtml } from "./utils/html.ts";
+ import { hasEmbedOrigins, isEmbeddedEnvelope } from "./embedding.ts";
+ import { releaseSentWebhook } from "./webhooks/outbox.ts";
++import { displayTimeZone } from "./display-time-zone.ts";
+ 
+ type CreateDraftEnvelopeOptions = {
+   database?: DbPool;
+@@ -611,14 +612,14 @@ const TIMELINE_TONE_MAP: Record<
+ const shortDateFormatter = new Intl.DateTimeFormat("en-US", {
+   day: "numeric",
+   month: "short",
+-  timeZone: "UTC",
++  timeZone: displayTimeZone(),
+   year: "numeric",
+ });
+ 
+ const longDateFormatter = new Intl.DateTimeFormat("en-US", {
+   day: "numeric",
+   month: "long",
+-  timeZone: "UTC",
++  timeZone: displayTimeZone(),
+   year: "numeric",
+ });
+ 
+@@ -627,7 +628,7 @@ const timelineDateFormatter = new Intl.DateTimeFormat("en-US", {
+   hour: "numeric",
+   minute: "2-digit",
+   month: "short",
+-  timeZone: "UTC",
++  timeZone: displayTimeZone(),
+ });
+ 
+ export async function createDraftEnvelope(
+diff --git a/src/lib/schemas/signing.ts b/src/lib/schemas/signing.ts
+index 95e71ec..33d195c 100644
+--- a/src/lib/schemas/signing.ts
++++ b/src/lib/schemas/signing.ts
+@@ -68,6 +68,8 @@ export const signingPayloadSchema = z.object({
+   consentUrl: z.string().trim().min(1),
+   consentedAt: unixTimestampSchema.nullable(),
+   currentSignerFields: z.array(signingCurrentFieldSchema),
++  /** The IANA zone the signing date is written in. */
++  displayTimeZone: z.string().trim().min(1),
+   disclosure: signingDisclosureSchema,
+   declineUrl: z.string().trim().min(1),
+   /** Checks, as the signer types, that an answer fits its box. */
+diff --git a/src/lib/services/pdf-finalize.ts b/src/lib/services/pdf-finalize.ts
+index d16d880..10200e0 100644
+--- a/src/lib/services/pdf-finalize.ts
++++ b/src/lib/services/pdf-finalize.ts
+@@ -40,6 +40,7 @@ import {
+   type StorageObjectRef,
+   type StorageService,
+ } from "./storage.ts";
++import { formatEvidenceTimestamp } from "../display-time-zone.ts";
+ 
+ const DEFAULT_AUDIT_PAGE_SIZE = {
+   height: 792,
+@@ -198,9 +199,7 @@ function formatAuditTimestamp(timestamp: number | null | undefined): string {
+     return "—";
+   }
+ 
+-  const value = new Date(timestamp * 1000);
+-
+-  return value.toISOString().replace(".000Z", " UTC");
++  return formatEvidenceTimestamp(timestamp);
+ }
+ 
+ function chunkLongWord(
+diff --git a/src/lib/signing.ts b/src/lib/signing.ts
+index 14f4d87..741b264 100644
+--- a/src/lib/signing.ts
++++ b/src/lib/signing.ts
+@@ -130,6 +130,7 @@ import {
+   routeAfterSignatures,
+   signingStepOf,
+ } from "./signing-steps.ts";
++import { displayTimeZone } from "./display-time-zone.ts";
+ 
+ export type SigningRequestMeta = {
+   ipAddress?: string | null;
+@@ -933,20 +934,14 @@ async function buildImageDataUrl(
+   return `data:${imageObject.contentType ?? "image/png"};base64,${Buffer.from(imageObject.body).toString("base64")}`;
+ }
+ 
+-function formatLocalSigningDate(
+-  submittedAt: number,
+-  timezoneOffsetMinutes: number,
+-): string {
+-  const localDateTime = new Date(
+-    submittedAt * 1000 - timezoneOffsetMinutes * 60 * 1000,
+-  );
+-
++/** A date field's value: the signing date in the display zone. */
++function formatSigningDate(submittedAt: number): string {
+   return new Intl.DateTimeFormat("en-US", {
+     day: "numeric",
+     month: "long",
+-    timeZone: "UTC",
++    timeZone: displayTimeZone(),
+     year: "numeric",
+-  }).format(localDateTime);
++  }).format(new Date(submittedAt * 1000));
+ }
+ 
+ function parsePngDataUrl(dataUrl: string): Uint8Array {
+@@ -2173,6 +2168,7 @@ export async function getSigningPayloadForToken(
+ 
+   return signingPayloadSchema.parse({
+     consentUrl: getSigningConsentUrl(token),
++    displayTimeZone: displayTimeZone(),
+     fieldFitUrl: getSigningFieldFitUrl(token),
+     consentedAt: checkState.consentedAt,
+     currentSignerFields,
+@@ -2515,10 +2511,7 @@ function buildSignerSubmission(
+ 
+   // Names this submission's drawn signatures apart from any other's.
+   const submissionId = randomUUID();
+-  const localDateValue = formatLocalSigningDate(
+-    submittedAt,
+-    parsedInput.clientTimezoneOffsetMinutes,
+-  );
++  const localDateValue = formatSigningDate(submittedAt);
+   const drawnSignatureUploads: Array<{
+     body: Uint8Array;
+     imageKey: string;
+diff --git a/src/lib/verify.ts b/src/lib/verify.ts
+index 95363ff..a648e42 100644
+--- a/src/lib/verify.ts
++++ b/src/lib/verify.ts
+@@ -1,6 +1,7 @@
+ import { z } from "zod";
+ 
+ import { getDb, queryOne, type DbExecutor } from "./db/connection.ts";
++import { displayTimeZone } from "./display-time-zone.ts";
+ 
+ // The Verify page: anyone holding a copy of a finished document or
+ // certificate can check that it is exactly the file this install produced.
+@@ -22,6 +23,8 @@ export type VerifyResult =
+       fileKind: "signed-document" | "certificate";
+       finishedAt: number | null;
+       match: true;
++      /** The IANA zone to show finishedAt in. */
++      timeZone: string;
+       /** People who approved or rejected instead of signing. */
+       approverCount: number;
+       signerCount: number;
+@@ -84,6 +87,7 @@ export async function verifyDocumentHash(
+     match: true,
+     signerCount: row.signerCount,
+     status: row.status,
++    timeZone: displayTimeZone(),
+     title: row.title,
+   };
+ }
