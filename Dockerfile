@@ -8,8 +8,12 @@ RUN test -n "$SIGNUDOC_VERSION" \
  && apt-get update && apt-get install -y --no-install-recommends git ca-certificates \
  && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
+COPY patches /patches
+# Our changes on top of upstream, one concern per patch. A patch that no
+# longer applies fails the build: rebase it before bumping VERSION.
 RUN git clone --depth 1 --branch "$SIGNUDOC_VERSION" \
       https://github.com/NYLLON-SOFTWARE/SignuDoc.git . \
+ && for p in /patches/*.patch; do git apply --verbose "$p"; done \
  && rm -rf .git
 ENV NEXT_TELEMETRY_DISABLED=1
 RUN npm ci && npm run build && npm prune --omit=dev

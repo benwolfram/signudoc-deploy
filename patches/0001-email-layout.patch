@@ -1,0 +1,555 @@
+diff --git a/e2e/signing-flow.spec.ts b/e2e/signing-flow.spec.ts
+index 93760b2..8119fe2 100644
+--- a/e2e/signing-flow.spec.ts
++++ b/e2e/signing-flow.spec.ts
+@@ -338,10 +338,8 @@ test("a new install is set up, a sender sends a PDF and a recipient signs it", a
+       to: senderEmail,
+     });
+ 
+-    // Emails carry the organization's name, not the product's.
+-    expect(verificationEmail.text).toContain(
+-      `Sent by ${ORGANIZATION_NAME} using SignuDoc.`,
+-    );
++    // Emails do not advertise the product.
++    expect(verificationEmail.text).not.toContain("SignuDoc");
+ 
+     await page.goto(
+       extractLink(verificationEmail.text, "/api/auth/verify-email"),
+diff --git a/src/lib/auth/server.ts b/src/lib/auth/server.ts
+index 9148097..01050ef 100644
+--- a/src/lib/auth/server.ts
++++ b/src/lib/auth/server.ts
+@@ -122,6 +122,7 @@ function buildEmailVerificationMessage(input: {
+     {
+       htmlBody,
+       textBody,
++      title: "Verify your email",
+     },
+     input.branding,
+   );
+@@ -159,6 +160,7 @@ function buildChangeEmailConfirmationMessage(input: {
+     {
+       htmlBody,
+       textBody,
++      title: "Confirm your new email",
+     },
+     input.branding,
+   );
+@@ -195,6 +197,7 @@ function buildPasswordResetMessage(input: {
+     {
+       htmlBody,
+       textBody,
++      title: "Reset your password",
+     },
+     input.branding,
+   );
+diff --git a/src/lib/download-renewal.ts b/src/lib/download-renewal.ts
+index ca9353f..9184ab3 100644
+--- a/src/lib/download-renewal.ts
++++ b/src/lib/download-renewal.ts
+@@ -46,7 +46,10 @@ export async function sendFreshDownloadLinks(
+         `<a href="${escapeHtml(evidenceUrl)}">Download certificate</a></p>`,
+         "<p>Download and keep the files: they are your copy of the record.</p>",
+       ].join("");
+-      const body = withUserEmailLegalFooter({ htmlBody, textBody }, branding);
++      const body = withUserEmailLegalFooter(
++        { htmlBody, textBody, title: "New download links" },
++        branding,
++      );
+       const delivery = await emailService.send({
+         htmlBody: body.htmlBody,
+         subject,
+diff --git a/src/lib/email-test.ts b/src/lib/email-test.ts
+index 14f8a4d..7cf93dc 100644
+--- a/src/lib/email-test.ts
++++ b/src/lib/email-test.ts
+@@ -43,7 +43,7 @@ export async function sendTestEmail({
+       `<p>This is a test message from ${escapeHtml(productName)}. If you are reading it, email is working.</p>`,
+     ].join("");
+     const content = withUserEmailLegalFooter(
+-      { htmlBody, textBody },
++      { htmlBody, textBody, title: "Your email is working" },
+       branding,
+       env,
+     );
+diff --git a/src/lib/envelopes.ts b/src/lib/envelopes.ts
+index fb63dae..5bb8e44 100644
+--- a/src/lib/envelopes.ts
++++ b/src/lib/envelopes.ts
+@@ -1737,6 +1737,7 @@ function buildVoidNotificationEmail(input: {
+     {
+       htmlBody,
+       textBody,
++      title: "This request was cancelled",
+     },
+     input.branding,
+   );
+diff --git a/src/lib/reminders.ts b/src/lib/reminders.ts
+index 14962b3..2c59faa 100644
+--- a/src/lib/reminders.ts
++++ b/src/lib/reminders.ts
+@@ -288,6 +288,9 @@ function buildReminderEmail(input: {
+     {
+       htmlBody,
+       textBody,
++      title: automatic
++        ? `Still waiting for your ${action.noun}`
++        : `A reminder to ${action.verb} this document`,
+     },
+     input.branding,
+   );
+diff --git a/src/lib/services/email-layout.test.ts b/src/lib/services/email-layout.test.ts
+new file mode 100644
+index 0000000..27c002e
+--- /dev/null
++++ b/src/lib/services/email-layout.test.ts
+@@ -0,0 +1,86 @@
++import assert from "node:assert/strict";
++import { test } from "node:test";
++
++import { contrastRatio } from "../brand-color.ts";
++import {
++  buttonize,
++  EMAIL_TOKENS,
++  emailAccent,
++  renderEmailLayout,
++} from "./email-layout.ts";
++
++const AA = 4.5;
++
++test("every text color in the layout is readable on what it sits on", () => {
++  assert.ok(contrastRatio(EMAIL_TOKENS.text, EMAIL_TOKENS.card) >= AA);
++  assert.ok(contrastRatio(EMAIL_TOKENS.muted, EMAIL_TOKENS.page) >= AA);
++});
++
++test("white button text is readable on the accent, even for a pale brand color", () => {
++  for (const brand of [null, "#ffe14d", "#a0e8ff", "#5340d6"]) {
++    const accent = emailAccent(brand);
++
++    assert.ok(
++      contrastRatio(EMAIL_TOKENS.onAccent, accent) >= AA,
++      brand ?? "default",
++    );
++    // Outlined buttons put the accent on the card.
++    assert.ok(
++      contrastRatio(accent, EMAIL_TOKENS.card) >= AA,
++      brand ?? "default",
++    );
++  }
++});
++
++test("a paragraph that is only a link becomes a filled button", () => {
++  const html = buttonize(
++    '<p>Hi</p><p><a href="https://x.test/s/1">Review and sign</a></p>',
++    "#5340d6",
++  );
++
++  assert.match(html, /<p>Hi<\/p>/);
++  assert.match(
++    html,
++    /background:#5340d6;[^"]*"><a href="https:\/\/x\.test\/s\/1" style="[^"]*color:#ffffff;[^"]*">Review and sign<\/a>/,
++  );
++  assert.doesNotMatch(html, /<p><a/);
++});
++
++test("several links in one paragraph become a filled button, then outlined ones", () => {
++  const html = buttonize(
++    '<p><a href="/a">Download signed PDF</a><br /><a href="/b">Download certificate</a></p>',
++    "#5340d6",
++  );
++
++  assert.match(
++    html,
++    /background:#5340d6;[^>]*><a href="\/a" style="[^"]*color:#ffffff/,
++  );
++  assert.match(
++    html,
++    /background:#ffffff;[^>]*><a href="\/b" style="[^"]*color:#5340d6/,
++  );
++});
++
++test("a link inside a sentence stays a link", () => {
++  const html = buttonize(
++    '<p>Questions? Contact <a href="mailto:a@b.test">a@b.test</a>.</p>',
++    "#5340d6",
++  );
++
++  assert.doesNotMatch(html, /<table/);
++});
++
++test("the layout keeps the message, its escaping and the footer", () => {
++  const html = renderEmailLayout({
++    bodyHtml: "<p>Tom &amp; Jerry &lt;3</p>",
++    brandColor: null,
++    footerHtml: "<p>Sent using SignuDoc.</p>",
++    logoHtml: "",
++  });
++
++  assert.ok(html.startsWith("<!doctype html>"));
++  assert.match(html, />Tom &amp; Jerry &lt;3<\/p>/);
++  assert.match(html, />Sent using SignuDoc\.<\/p>/);
++  assert.match(html, /<meta name="color-scheme" content="light" \/>/);
++});
+diff --git a/src/lib/services/email-layout.ts b/src/lib/services/email-layout.ts
+new file mode 100644
+index 0000000..f0b9e12
+--- /dev/null
++++ b/src/lib/services/email-layout.ts
+@@ -0,0 +1,112 @@
++import { buildBrandPalette, DEFAULT_BRAND_COLOR } from "../brand-color.ts";
++import { escapeHtml } from "../utils/html.ts";
++
++// The frame every email to a person is sent in: a white card on a pale
++// page, the logo above it, the footer below it, and each paragraph that is
++// only links drawn as buttons. Email programs ignore style sheets and most
++// modern CSS, so the layout is tables and every style is inline.
++
++/** Every color the layout uses. email-layout.test.ts checks their contrast. */
++export const EMAIL_TOKENS = {
++  page: "#f4f4f6",
++  card: "#ffffff",
++  border: "#e4e4e9",
++  text: "#1d1d22",
++  muted: "#5c5c66",
++  onAccent: "#ffffff",
++} as const;
++
++const FONT =
++  "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif";
++
++type EmailLayoutInput = {
++  bodyHtml: string;
++  brandColor: string | null;
++  footerHtml: string;
++  logoHtml: string;
++  title?: string;
++};
++
++// A paragraph made of links alone, one per line, as the messages write their
++// calls to action: <p><a href="…">…</a><br /><a href="…">…</a></p>.
++const LINK = String.raw`<a href="([^"]*)">([^<]*)</a>`;
++const LINK_PARAGRAPH = new RegExp(
++  String.raw`<p>(${LINK}(?:<br />${LINK})*)</p>`,
++  "g",
++);
++const LINK_GLOBAL = new RegExp(LINK, "g");
++
++/** The accent for buttons and links: white text on it is readable. */
++export function emailAccent(brandColor: string | null): string {
++  return (buildBrandPalette(brandColor ?? DEFAULT_BRAND_COLOR) ??
++    buildBrandPalette(DEFAULT_BRAND_COLOR))!.accent;
++}
++
++function button(href: string, label: string, accent: string, primary: boolean) {
++  const fill = primary ? accent : EMAIL_TOKENS.card;
++  const ink = primary ? EMAIL_TOKENS.onAccent : accent;
++
++  // 14px padding + 20px line height = 48px tall, above the 44px target.
++  return [
++    '<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 12px;">',
++    `<tr><td style="border-radius:8px;background:${fill};border:1px solid ${accent};">`,
++    `<a href="${href}" style="display:inline-block;padding:14px 24px;font-family:${FONT};font-size:16px;line-height:20px;font-weight:600;color:${ink};text-decoration:none;border-radius:8px;">${label}</a>`,
++    "</td></tr></table>",
++  ].join("");
++}
++
++/** Link-only paragraphs become buttons: the first filled, the rest outlined. */
++export function buttonize(html: string, accent: string): string {
++  return html.replace(LINK_PARAGRAPH, (paragraph) => {
++    const links = [...paragraph.matchAll(LINK_GLOBAL)];
++    const buttons = links
++      .map(([, href, label], index) =>
++        button(href!, label!, accent, index === 0),
++      )
++      .join("");
++
++    return `<div style="margin:24px 0 8px;">${buttons}</div>`;
++  });
++}
++
++function styleText(html: string, accent: string, color: string, size: number) {
++  return html
++    .replaceAll(
++      "<p>",
++      `<p style="margin:0 0 16px;font-family:${FONT};font-size:${size}px;line-height:1.6;color:${color};">`,
++    )
++    .replace(/<a href="([^"]*)">/g, `<a href="$1" style="color:${accent};">`);
++}
++
++export function renderEmailLayout(input: EmailLayoutInput): string {
++  const accent = emailAccent(input.brandColor);
++  const body = styleText(
++    buttonize(input.bodyHtml, accent),
++    accent,
++    EMAIL_TOKENS.text,
++    16,
++  );
++  const footer = styleText(input.footerHtml, accent, EMAIL_TOKENS.muted, 13);
++
++  return [
++    '<!doctype html><html lang="en"><head><meta charset="utf-8" />',
++    '<meta name="viewport" content="width=device-width,initial-scale=1" />',
++    '<meta name="color-scheme" content="light" /><meta name="supported-color-schemes" content="light" />',
++    "</head>",
++    `<body style="margin:0;padding:0;background:${EMAIL_TOKENS.page};">`,
++    `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:${EMAIL_TOKENS.page};">`,
++    '<tr><td align="center" style="padding:32px 16px;">',
++    '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:560px;">',
++    input.logoHtml
++      ? `<tr><td style="padding:0 8px 20px;">${input.logoHtml}</td></tr>`
++      : "",
++    `<tr><td style="background:${EMAIL_TOKENS.card};border:1px solid ${EMAIL_TOKENS.border};border-radius:12px;padding:32px;">`,
++    input.title
++      ? `<h1 style="margin:0 0 20px;font-family:${FONT};font-size:24px;line-height:1.3;font-weight:700;color:${EMAIL_TOKENS.text};">${escapeHtml(input.title)}</h1>`
++      : "",
++    body,
++    "</td></tr>",
++    footer ? `<tr><td style="padding:20px 8px 0;">${footer}</td></tr>` : "",
++    "</table></td></tr></table></body></html>",
++  ].join("");
++}
+diff --git a/src/lib/services/email-legal-footer.test.ts b/src/lib/services/email-legal-footer.test.ts
+index f62a7a8..1608b21 100644
+--- a/src/lib/services/email-legal-footer.test.ts
++++ b/src/lib/services/email-legal-footer.test.ts
+@@ -40,12 +40,12 @@ test("the hosted service links to its own terms, privacy and contact pages", ()
+   );
+   assert.match(
+     result.htmlBody,
+-    /<a href="https:\/\/sign\.acme\.com\/terms">Terms of Service<\/a>/,
++    /<a href="https:\/\/sign\.acme\.com\/terms"[^>]*>Terms of Service<\/a>/,
+   );
+   assert.doesNotMatch(result.textBody, /Sent by|Sent using/);
+ });
+ 
+-test("a neutral install with nothing else set links its signer privacy notice and says who sent the message", () => {
++test("a neutral install with nothing else set links its signer privacy notice and does not advertise SignuDoc", () => {
+   const result = withUserEmailLegalFooter(body, neutral, env);
+ 
+   assert.equal(
+@@ -55,10 +55,9 @@ test("a neutral install with nothing else set links its signer privacy notice an
+       "",
+       "Privacy notice:",
+       "https://sign.acme.com/signer-privacy",
+-      "",
+-      "Sent by Acme Corp using SignuDoc.",
+     ].join("\n"),
+   );
++  assert.doesNotMatch(result.htmlBody, /SignuDoc/);
+ });
+ 
+ test("a neutral install links to the organization's own pages and support address", () => {
+@@ -85,43 +84,29 @@ test("a neutral install links to the organization's own pages and support addres
+       "https://acme.com/privacy",
+       "",
+       "Questions? Contact help@acme.com.",
+-      "",
+-      "Sent by Acme Corp using SignuDoc.",
+     ].join("\n"),
+   );
+   assert.match(
+     result.htmlBody,
+-    /<a href="mailto:help@acme\.com">help@acme\.com<\/a>/,
++    /<a href="mailto:help@acme\.com"[^>]*>help@acme\.com<\/a>/,
+   );
+ });
+ 
+-test("an install that has not been named yet does not invent a name", () => {
++test("links and the title are escaped in the HTML part", () => {
+   const result = withUserEmailLegalFooter(
+-    body,
+-    { ...neutral, organizationName: null, productName: "SignuDoc" },
+-    env,
+-  );
+-
+-  assert.match(result.textBody, /\n\nSent using SignuDoc\.$/);
+-  assert.doesNotMatch(result.textBody, /Acme/);
+-});
+-
+-test("the organization's name and links are escaped in the HTML part", () => {
+-  const result = withUserEmailLegalFooter(
+-    body,
++    { ...body, title: "Harbour & <Finch>" },
+     {
+       ...neutral,
+-      organizationName: "Harbour & <Finch>",
+       termsUrl: 'https://acme.com/terms?a=1&b="2"',
+     },
+     env,
+   );
+ 
+-  assert.match(result.htmlBody, /Sent by Harbour &amp; &lt;Finch&gt; using/);
++  assert.match(result.htmlBody, /<h1 [^>]*>Harbour &amp; &lt;Finch&gt;<\/h1>/);
+   assert.doesNotMatch(result.htmlBody, /<Finch>/);
+   assert.doesNotMatch(result.htmlBody, /b="2"/);
+-  // The plain-text part is not HTML and carries the name as it is.
+-  assert.match(result.textBody, /Sent by Harbour & <Finch> using SignuDoc\./);
++  // The title is for the HTML part only.
++  assert.doesNotMatch(result.textBody, /Finch/);
+ });
+ 
+ test("a neutral install with no links does not need to know its own URL", () => {
+@@ -139,12 +124,12 @@ test("an install with a logo puts it at the top of the HTML part only", () => {
+     env,
+   );
+ 
+-  assert.ok(
+-    result.htmlBody.startsWith(
+-      '<p style="margin:0 0 24px;"><img src="https://sign.acme.com/api/brand/logo?v=0123456789abcdef" alt="Acme &quot;Signing&quot; &amp; Co"',
+-    ),
++  const logo = result.htmlBody.indexOf(
++    '<img src="https://sign.acme.com/api/brand/logo?v=0123456789abcdef" alt="Acme &quot;Signing&quot; &amp; Co"',
+   );
+-  assert.ok(result.htmlBody.includes("<p>Hello</p>"));
++
++  assert.ok(logo > -1);
++  assert.ok(logo < result.htmlBody.indexOf(">Hello</p>"));
+   assert.doesNotMatch(result.textBody, /logo/);
+ });
+ 
+diff --git a/src/lib/services/email-legal-footer.ts b/src/lib/services/email-legal-footer.ts
+index 127b49e..fe5de1a 100644
+--- a/src/lib/services/email-legal-footer.ts
++++ b/src/lib/services/email-legal-footer.ts
+@@ -1,6 +1,7 @@
+-import { SIGNUDOC_NAME, type Branding } from "../branding.ts";
++import { type Branding } from "../branding.ts";
+ import { getEnv, type EnvSource } from "../utils/env.ts";
+ import { escapeHtml } from "../utils/html.ts";
++import { renderEmailLayout } from "./email-layout.ts";
+ import { requireConfigValue } from "./service-config.ts";
+ 
+ type EmailBodyContent = {
+@@ -8,6 +9,11 @@ type EmailBodyContent = {
+   textBody: string;
+ };
+ 
++type EmailContentWithTitle = EmailBodyContent & {
++  /** The heading at the top of the HTML part. */
++  title?: string;
++};
++
+ type FooterLink = {
+   label: string;
+   url: string;
+@@ -56,7 +62,7 @@ function buildLogoHeader(branding: Branding, env: EnvSource): string {
+   const source = new URL(branding.logoUrl, appUrl).toString();
+ 
+   return [
+-    '<p style="margin:0 0 24px;">',
++    '<p style="margin:0;">',
+     `<img src="${escapeHtml(source)}" alt="${escapeHtml(branding.productName)}" height="40" `,
+     'style="display:block;height:40px;width:auto;max-width:240px;border:0;" />',
+     "</p>",
+@@ -66,12 +72,11 @@ function buildLogoHeader(branding: Branding, env: EnvSource): string {
+ /**
+  * Appends the footer every email to a person carries: the install's terms,
+  * privacy and contact links, where it has them. On a neutral install the
+- * footer also names the organization's support address and says the message
+- * was sent with SignuDoc, and the organization's logo, when it has one,
+- * goes at the top.
++ * footer also names the organization's support address, and the
++ * organization's logo, when it has one, goes at the top.
+  */
+ export function withUserEmailLegalFooter(
+-  input: EmailBodyContent,
++  input: EmailContentWithTitle,
+   branding: Branding,
+   env: EnvSource = process.env,
+ ): EmailBodyContent {
+@@ -92,28 +97,22 @@ export function withUserEmailLegalFooter(
+         `Questions? Contact <a href="mailto:${escapeHtml(branding.supportAddress)}">${escapeHtml(branding.supportAddress)}</a>.`,
+       );
+     }
+-
+-    const sentBy = branding.organizationName
+-      ? `Sent by ${branding.organizationName} using ${SIGNUDOC_NAME}.`
+-      : `Sent using ${SIGNUDOC_NAME}.`;
+-
+-    textLines.push("", sentBy);
+-    htmlLines.push(escapeHtml(sentBy));
+   }
+ 
+-  if (htmlLines.length === 0) {
+-    return logoHeader
+-      ? { htmlBody: `${logoHeader}${input.htmlBody}`, textBody: input.textBody }
+-      : input;
+-  }
++  const htmlBody = renderEmailLayout({
++    bodyHtml: input.htmlBody,
++    brandColor: branding.brandColor,
++    footerHtml: htmlLines.length ? `<p>${htmlLines.join("<br />")}</p>` : "",
++    logoHtml: logoHeader,
++    title: input.title,
++  });
+ 
+-  const htmlFooter = [
+-    '<hr style="margin:24px 0;border:none;border-top:1px solid #e2e2e2;" />',
+-    `<p>${htmlLines.join("<br />")}</p>`,
+-  ].join("");
++  if (textLines.length === 0) {
++    return { htmlBody, textBody: input.textBody };
++  }
+ 
+   return {
+-    htmlBody: `${logoHeader}${input.htmlBody}${htmlFooter}`,
++    htmlBody,
+     // Each entry starts with an empty line; one more newline puts that
+     // empty line between the message and the footer.
+     textBody: `${input.textBody}\n${textLines.join("\n")}`,
+diff --git a/src/lib/services/signing-invitation-email.ts b/src/lib/services/signing-invitation-email.ts
+index 3e7c933..2212ac5 100644
+--- a/src/lib/services/signing-invitation-email.ts
++++ b/src/lib/services/signing-invitation-email.ts
+@@ -76,6 +76,7 @@ export function buildSigningInvitationEmail(
+     {
+       htmlBody,
+       textBody,
++      title: `Please ${action.verb} this document`,
+     },
+     input.branding,
+   );
+diff --git a/src/lib/signing.ts b/src/lib/signing.ts
+index 5ffd749..14f4d87 100644
+--- a/src/lib/signing.ts
++++ b/src/lib/signing.ts
+@@ -413,6 +413,7 @@ function buildCompletionSenderEmail(input: {
+     {
+       htmlBody,
+       textBody,
++      title: "Everyone has signed",
+     },
+     input.branding,
+   );
+@@ -465,6 +466,9 @@ function buildDeclineNotificationEmail(input: {
+     {
+       htmlBody,
+       textBody,
++      title: input.rejected
++        ? `${input.signerName} rejected the document`
++        : `${input.signerName} declined to sign`,
+     },
+     input.branding,
+   );
+@@ -523,6 +527,9 @@ function buildCompletionSignerEmail(input: {
+     {
+       htmlBody,
+       textBody,
++      title: input.copyOnly
++        ? "Your copy of the signed document"
++        : "Your document is fully signed",
+     },
+     input.branding,
+   );
+@@ -1543,7 +1550,10 @@ export async function sendSignerEmailCode(
+     `<p style="font-size:24px;font-weight:700;letter-spacing:4px">${issued.code}</p>`,
+     `<p>It works for ${String(minutes)} minutes. If you did not just open a signing link, ignore this email.</p>`,
+   ].join("");
+-  const body = withUserEmailLegalFooter({ htmlBody, textBody }, branding);
++  const body = withUserEmailLegalFooter(
++    { htmlBody, textBody, title: "Your signing code" },
++    branding,
++  );
+   let delivery: Awaited<ReturnType<EmailService["send"]>>;
+ 
+   try {

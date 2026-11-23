@@ -1,11 +1,12 @@
 name: Build image
 
-# Bump VERSION to an upstream release tag and push: CI builds and pushes
-# ghcr.io/<owner>/signudoc:<tag> and :latest.
+# Bump VERSION to an upstream release tag (or change a patch) and push: CI
+# builds and pushes ghcr.io/<owner>/signudoc:<tag>-<commit>, :<tag> and
+# :latest. The server pins <tag>-<commit>, which never moves.
 on:
   push:
     branches: [main]
-    paths: [VERSION, Dockerfile, .github/workflows/build.yml]
+    paths: [VERSION, Dockerfile, patches/**, .github/workflows/build.yml]
   workflow_dispatch:
 
 permissions:
@@ -20,7 +21,9 @@ jobs:
 
       - name: Read version
         id: v
-        run: echo "tag=$(tr -d '[:space:]' < VERSION)" >> "$GITHUB_OUTPUT"
+        run: |
+          echo "tag=$(tr -d '[:space:]' < VERSION)" >> "$GITHUB_OUTPUT"
+          echo "sha=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
 
       - uses: docker/setup-buildx-action@v3
 
@@ -37,6 +40,7 @@ jobs:
           build-args: SIGNUDOC_VERSION=${{ steps.v.outputs.tag }}
           push: true
           tags: |
+            ghcr.io/${{ github.repository_owner }}/signudoc:${{ steps.v.outputs.tag }}-${{ steps.v.outputs.sha }}
             ghcr.io/${{ github.repository_owner }}/signudoc:${{ steps.v.outputs.tag }}
             ghcr.io/${{ github.repository_owner }}/signudoc:latest
           cache-from: type=gha

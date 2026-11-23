@@ -5,9 +5,15 @@ Builds [SignuDoc](https://github.com/NYLLON-SOFTWARE/SignuDoc) from an upstream 
 ## Upgrade
 
 1. Read the upstream release notes.
-2. Set `VERSION` to the new tag and push. CI builds `ghcr.io/benwolfram/signudoc:<tag>`.
-3. On the server, bump the image tag in `/opt/docker/signudoc/docker-compose.yml`, then `docker compose pull && docker compose up -d`. Migrations run on start.
+2. Set `VERSION` to the new tag and push. CI builds `ghcr.io/benwolfram/signudoc:<tag>-<commit>`. If a patch in `patches/` no longer applies, the build fails: rebase it on the new tag first.
+3. On the server, set the image tag to the new `<tag>-<commit>` in `/opt/docker/signudoc/docker-compose.yml`, then `docker compose pull && docker compose up -d`. Migrations run on start.
 4. If a signing link breaks, re-check the path allowlist in `server/edge.Caddyfile` against `src/app`.
+
+## Patches
+
+`patches/*.patch` are applied in order on top of the upstream tag.
+
+- `0001-email-layout.patch`: every email to a person is sent in a branded card layout with a title, paragraphs that are only links become buttons, and the "Sent by … using SignuDoc" line is gone (`src/lib/services/email-layout.ts`, with tests).
 
 ## Layout on the server
 
