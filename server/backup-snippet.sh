@@ -3,6 +3,7 @@
 #   2. `dump_signudoc` in the dump list
 #   3. `signudoc/data` in the rsync SOURCES loop (PDFs; .env is picked up
 #      by the existing find over */.env)
+#   4. "$DUMP_DIR"/*.dump in the loop that copies dumps to $DEST/dumps
 
 dump_signudoc() {
   local name="signudoc-db"
