@@ -4,7 +4,8 @@
 # signer is linked to, and static assets. Sign-in, setup and every sender API
 # stay on the tailnet. /contact is left out on purpose: it is an open form,
 # bot protection only works on Vercel, and a self-hosted install never links
-# to it (signers get the support address in every email). Re-check after upgrades if a signing link stops working.
+# to it (signers get the support address in every email).
+# Re-check after upgrades if a signing link stops working.
 http://sign.brioche.studio {
 	import hardening
 
