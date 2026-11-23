@@ -2,7 +2,9 @@
 # Paste into /opt/docker/edge/Caddyfile in place of the DocuSeal block.
 # From src/app (signudoc v0.9.0): signing, download, verify, the legal pages a
 # signer is linked to, and static assets. Sign-in, setup and every sender API
-# stay on the tailnet. Re-check after upgrades if a signing link stops working.
+# stay on the tailnet. /contact is left out on purpose: it is an open form,
+# bot protection only works on Vercel, and a self-hosted install never links
+# to it (signers get the support address in every email). Re-check after upgrades if a signing link stops working.
 http://sign.brioche.studio {
 	import hardening
 
@@ -10,7 +12,7 @@ http://sign.brioche.studio {
 		/download/* /api/download/* \
 		/verify /verify/* /api/verify \
 		/privacy /terms /signer-privacy /electronic-signatures /accessibility \
-		/contact /api/contact /api/brand/logo \
+		/api/brand/logo \
 		/_next/static/* /pdfjs/* /icon.svg /favicon*
 	handle @public {
 		# The visitor's address for rate limits and the audit trail. Only
