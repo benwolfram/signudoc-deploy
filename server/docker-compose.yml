@@ -1,0 +1,70 @@
+name: signudoc
+
+# SignuDoc -- self-hosted document signing (github.com/NYLLON-SOFTWARE/SignuDoc).
+# Image: ghcr.io/benwolfram/signudoc, built by github.com/benwolfram/signudoc-deploy
+# from an upstream release tag.
+#
+# Admin UI: tailnet only, https://sign-admin.brioche.studio (tailnet-proxy Caddy
+# -> 127.0.0.1:5200). Signer pages only: https://sign.brioche.studio via the
+# edge stack's tunnel + path filter. APP_URL is the public host, so emailed
+# links work for clients; BETTER_AUTH_URL is the admin host, so sign-in only
+# works there.
+#
+# Postgres lives in a named volume and is backed up with pg_dump by
+# .scripts/backup.sh (dump_signudoc). data/storage holds the PDFs and is
+# rsynced as-is. Never rsync the live Postgres directory.
+#
+# Upgrade: bump VERSION in signudoc-deploy, wait for CI, then bump the tag
+# below and `docker compose pull && docker compose up -d`. Migrations run on
+# start.
+
+services:
+  app:
+    container_name: signudoc
+    # Pinned: signed documents live here, so upgrades are deliberate.
+    image: ghcr.io/benwolfram/signudoc:v0.9.0
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      - TZ=${TZ}
+      - DATABASE_URL=postgres://signudoc:${POSTGRES_PASSWORD}@db:5432/signudoc
+      - STORAGE_DRIVER=local
+      - STORAGE_LOCAL_DIR=/data/storage
+    depends_on:
+      db:
+        condition: service_healthy
+    mem_limit: 1g
+    memswap_limit: 1g
+    ports:
+      # Loopback only -- tailnet-proxy Caddy terminates TLS in front of this.
+      - "127.0.0.1:5200:3000"
+    volumes:
+      - ${DOCKER_ROOT}/signudoc/data/storage:/data/storage
+    # edgenet: edge-filter (../edge) proxies signer pages to the public tunnel.
+    networks: [default, edgenet]
+
+  db:
+    container_name: signudoc-db
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      - POSTGRES_USER=signudoc
+      - POSTGRES_DB=signudoc
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U signudoc -d signudoc"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    mem_limit: 512m
+    memswap_limit: 512m
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks: [default]
+
+volumes:
+  pgdata:
+
+networks:
+  edgenet:
+    external: true

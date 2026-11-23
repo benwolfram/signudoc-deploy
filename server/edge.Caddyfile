@@ -1,0 +1,26 @@
+# ---- SignuDoc: signer-facing routes only ------------------------------------
+# Paste into /opt/docker/edge/Caddyfile in place of the DocuSeal block.
+# From src/app (signudoc v0.9.0): signing, download, verify, the legal pages a
+# signer is linked to, and static assets. Sign-in, setup and every sender API
+# stay on the tailnet. Re-check after upgrades if a signing link stops working.
+http://sign.brioche.studio {
+	import hardening
+
+	@public path /sign/* /api/signing/* \
+		/download/* /api/download/* \
+		/verify /verify/* /api/verify \
+		/privacy /terms /signer-privacy /electronic-signatures /accessibility \
+		/contact /api/contact /api/brand/logo \
+		/_next/static/* /pdfjs/* /icon.svg /favicon*
+	handle @public {
+		# The visitor's address for rate limits and the audit trail. Only
+		# cloudflared reaches this Caddy, and Cloudflare overwrites
+		# CF-Connecting-IP, so a visitor cannot choose it.
+		reverse_proxy signudoc:3000 {
+			header_up X-Forwarded-For {http.request.header.CF-Connecting-IP}
+		}
+	}
+	handle {
+		redir https://sign-admin.brioche.studio{uri} 302
+	}
+}
