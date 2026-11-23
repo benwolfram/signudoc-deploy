@@ -1,0 +1,99 @@
+diff --git a/src/lib/envelope-deadline.test.ts b/src/lib/envelope-deadline.test.ts
+index fa8ec21..51132fd 100644
+--- a/src/lib/envelope-deadline.test.ts
++++ b/src/lib/envelope-deadline.test.ts
+@@ -4,6 +4,7 @@ import { test } from "node:test";
+ import {
+   deadlineFromDays,
+   EnvelopeDeadlinePassedError,
++  displayTimeZone,
+   formatDeadline,
+   isEnvelopeExpired,
+   nextSignerLinkExpiresAt,
+@@ -86,3 +87,26 @@ test("a deadline is written out in full, in UTC", () => {
+   );
+   assert.equal(buildDeadlineLine(null), null);
+ });
++
++test("a deadline is written in the install's own zone, daylight time included", () => {
++  // 2027-01-15 08:00:00 UTC, in winter
++  assert.equal(
++    formatDeadline(1_800_000_000, "America/Winnipeg"),
++    "January 15, 2027 at 2:00 AM CST",
++  );
++  // 2026-12-06 is still winter; 2026-07-06 23:00 UTC is in daylight time
++  assert.equal(
++    formatDeadline(Date.UTC(2026, 6, 6, 23) / 1000, "America/Winnipeg"),
++    "July 6, 2026 at 6:00 PM CDT",
++  );
++});
++
++test("the display zone comes from DISPLAY_TIME_ZONE, and anything else is UTC", () => {
++  assert.equal(
++    displayTimeZone({ DISPLAY_TIME_ZONE: "America/Winnipeg" }),
++    "America/Winnipeg",
++  );
++  assert.equal(displayTimeZone({}), "UTC");
++  assert.equal(displayTimeZone({ DISPLAY_TIME_ZONE: " " }), "UTC");
++  assert.equal(displayTimeZone({ DISPLAY_TIME_ZONE: "Mars/Olympus" }), "UTC");
++});
+diff --git a/src/lib/envelope-deadline.ts b/src/lib/envelope-deadline.ts
+index 89d7e62..4d85056 100644
+--- a/src/lib/envelope-deadline.ts
++++ b/src/lib/envelope-deadline.ts
+@@ -93,18 +93,42 @@ export function nextSignerLinkExpiresAt(
+     : turnStartsAt + SIGNING_LINK_TTL_SECONDS;
+ }
+ 
+-const deadlineFormatter = new Intl.DateTimeFormat("en-US", {
+-  day: "numeric",
+-  hour: "numeric",
+-  minute: "2-digit",
+-  month: "long",
+-  timeZone: "UTC",
+-  year: "numeric",
+-});
+-
+-/** "December 12, 2026 at 9:20 PM UTC" */
+-export function formatDeadline(unixTimestamp: number): string {
+-  return `${deadlineFormatter
++/**
++ * The zone deadlines are written in: DISPLAY_TIME_ZONE (an IANA name such as
++ * "America/Winnipeg"), or UTC when it is unset or not a zone.
++ */
++export function displayTimeZone(
++  env: Record<string, string | undefined> = process.env,
++): string {
++  const zone = env.DISPLAY_TIME_ZONE?.trim();
++
++  if (!zone) {
++    return "UTC";
++  }
++
++  try {
++    new Intl.DateTimeFormat("en-US", { timeZone: zone });
++
++    return zone;
++  } catch {
++    return "UTC";
++  }
++}
++
++/** "December 12, 2026 at 9:20 PM UTC", or "… at 3:20 PM CST" in Winnipeg. */
++export function formatDeadline(
++  unixTimestamp: number,
++  timeZone: string = displayTimeZone(),
++): string {
++  return new Intl.DateTimeFormat("en-US", {
++    day: "numeric",
++    hour: "numeric",
++    minute: "2-digit",
++    month: "long",
++    timeZone,
++    timeZoneName: "short",
++    year: "numeric",
++  })
+     .format(new Date(unixTimestamp * 1000))
+-    .replace(/[  ]/g, " ")} UTC`;
++    .replace(/[\u202f\u00a0]/g, " ");
+ }
